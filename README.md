@@ -44,14 +44,21 @@ copies the held image `entry.png` to `/output/entry.png` byte for byte, so
 two runs write identical bytes. It first validates the image: it must be a
 whole PNG or JPEG (every PNG chunk with its checksum, or a JPEG ending in
 the EOI marker), at most 1 MiB and at most 1024×1024 pixels — and refuses
-to copy a bad file instead of handing the judge one. After copying it
-verifies the output's sha256 matches the source.
+to copy a bad file instead of handing the judge one. The validation also
+requires the PNG to actually carry image data: a header (IHDR) must be
+present with a non-zero width and height, and at least one IDAT chunk must
+hold pixel data, since the gate requires the image data the header
+describes. After copying it verifies the output's sha256 matches the
+source.
 
 Run it:
 
 ```sh
 python3 main.py
 # writes /output/entry.png (or $MAKEFUN_OUTPUT_DIR/entry.png)
+
+python3 main.py --verify
+# reports the held image (kind, dimensions, size, sha256) without writing
 ```
 
 ## License

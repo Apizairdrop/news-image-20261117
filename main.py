@@ -6,7 +6,8 @@ The image (entry.png, beside this file) sums up the world news of Tuesday
 Bridge, Iran's drones targeting a U.S. radar base in Bahrain, the
 Trump-Xi-Putin three-way summit set for Shenzhen, and five EU states planning
 migrant return hubs in Rwanda. Deterministic: a byte copy, so two runs write
-identical bytes.
+identical bytes. Run `python3 main.py --verify` to report on the held image
+(kind, dimensions, size, sha256) without writing anything.
 """
 import os
 import shutil
@@ -31,7 +32,8 @@ def validate(path):
         data = f.read()
     if data[:8] == b"\x89PNG\r\n\x1a\n":
         import binascii
-        pos, w, h, seen_iend = 8, None, None, False
+        pos, w, h = 8, None, None
+        seen_ihdr, seen_iend, idat_bytes = False, False, 0
         while pos + 8 <= len(data):
             ln = struct.unpack(">I", data[pos:pos + 4])[0]
             typ = data[pos + 4:pos + 8]
@@ -42,26 +44,55 @@ def validate(path):
             if binascii.crc32(data[pos + 4:end - 4]) & 0xFFFFFFFF != crc:
                 raise SystemExit(f"entry image PNG chunk {typ!r} has a bad CRC")
             if typ == b"IHDR":
+                seen_ihdr = True
                 w, h = struct.unpack(">II", data[pos + 8:pos + 16])
+            if typ == b"IDAT":
+                # The gate requires the image data the header describes, so
+                # a PNG with headers but no pixel data must fail here, not
+                # sail through as a valid-looking empty image.
+                idat_bytes += ln
             if typ == b"IEND":
                 seen_iend = True
                 break
             pos = end
+        if not seen_ihdr:
+            raise SystemExit("entry image PNG has no IHDR chunk")
+        if not w or not h:
+            raise SystemExit("entry image PNG has a zero width or height")
+        if idat_bytes == 0:
+            raise SystemExit("entry image PNG has no image data (no IDAT payload)")
         if not seen_iend:
             raise SystemExit("entry image PNG has no IEND chunk")
         if w > MAX_SIDE or h > MAX_SIDE:
             raise SystemExit(f"entry image {w}x{h} exceeds {MAX_SIDE}x{MAX_SIDE}")
-        return "PNG"
+        return ("PNG", w, h)
     if data[:2] == b"\xff\xd8":
         if not data.rstrip(b"\x00").endswith(b"\xff\xd9"):
             raise SystemExit("entry image JPEG has no EOI marker")
-        return "JPEG"
+        return ("JPEG", None, None)
     raise SystemExit("entry image is neither PNG nor JPEG (magic bytes)")
+
+
+def describe(path):
+    """One-line report on the held image for --verify: kind, dimensions,
+    size and sha256, so the image can be checked without writing a copy."""
+    import hashlib
+    kind, w, h = validate(path)
+    size = os.path.getsize(path)
+    with open(path, "rb") as f:
+        digest = hashlib.sha256(f.read()).hexdigest()
+    dims = f"{w}x{h}" if w and h else "unknown"
+    return f"{kind} {dims}, {size} bytes, sha256 {digest}"
 
 
 def main():
     src = os.path.join(HERE, "entry.png")
-    kind = validate(src)
+    if len(sys.argv) > 1 and sys.argv[1] == "--verify":
+        # Report on the held image and stop: no file is written, so this
+        # mode is safe to run anywhere, including before a submission.
+        print(f"entry.png: {describe(src)}")
+        return
+    kind, _w, _h = validate(src)
     out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
     os.makedirs(out_dir, exist_ok=True)
     dest = os.path.join(out_dir, "entry.png")
